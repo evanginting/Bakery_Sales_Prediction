@@ -1,0 +1,240 @@
+---
+title: "EDA"
+format: html
+editor: visual
+---
+
+# Exploratory Data Analysis
+
+This document includes all work necessary to perform Exploratory Data Analysis (EDA). EDA will help understand the data in general, including its basic features, distribution, etc..
+
+## Library
+
+List of libraries utilised in this document
+
+```{r libraries}
+library(tidyverse)
+library(tidymodels)
+library(here)
+library(corrplot)
+```
+
+## Data Exploration
+
+### Data Loading
+```{r data_loading}
+kiwo <- read_csv(here("data/kiwo.csv"), col_names = TRUE)
+train <- read_csv(here("data/train.csv"), col_names = TRUE)
+test <- read_csv(here("data/test.csv"), col_names = TRUE)
+wetter <- read_csv(here("data/wetter.csv"), col_names = TRUE)
+```
+
+
+
+### Data Understanding
+
+#### Kiwo Dataset
+
+- Summary, Row Counts and Missing Value
+```{r}
+summary(kiwo)
+nrow(kiwo)
+sum(is.na(kiwo))
+```
+There is no missing value from `kiwo` dataset.
+
+
+#### Train Dataset
+
+- Summary, Row Counts and Missing Value
+```{r train_summ}
+summary(train)
+nrow(train)
+sum(is.na(train))
+```
+There is no missing value from `train` dataset.
+
+- Data Distribution
+```{r train_dist}
+hist(train$Warengruppe)
+hist(train$Umsatz, breaks = 100)
+```
+It seems Warengrupe (category) 6 is the least frequent, appear below 500 times. On the other hand, other category seems appear about same amount of times.
+The sales dsitribution follows right-skewed distribution, where most of sales are recorded below 500.
+
+
+```{r}
+train |>
+  select(Warengruppe) |>
+  group_by(Warengruppe) |>
+  summarise(n = n())
+```
+
+
+#### Test Dataset
+
+- Summary, Row Counts and Missing Value
+```{r test_summ}
+summary(test)
+nrow(test)
+sum(is.na(test))
+```
+There is no missing value from `test` dataset.
+
+- Data Distribution
+```{r test_dist}
+hist(test$Warengruppe)
+```
+Similar to train dataset, here Warengrupper 6 is the least category to appear in the dataset.
+
+
+#### Wetter Dataset
+
+- Summary, Row Counts and Missing Value
+```{r wetter_summ}
+summary(wetter)
+nrow(wetter)
+sum(is.na(wetter))
+```
+There are 679 missing value from `wetter` dataset.
+
+- Data Distribution
+```{r wetter_dist}
+hist(wetter$Bewoelkung)
+hist(wetter$Temperatur)
+hist(wetter$Windgeschwindigkeit)
+hist(wetter$Wettercode)
+```
+
+### Data Merging
+
+Several datasets will be combine with `Datum` as the primary key, and `train` as the base table. These datasets are `kiwo`, `train`, and `wetter`.
+
+```{r merge}
+train_data <- train |>
+  left_join(kiwo, by = "Datum") |>
+  left_join(wetter, by = "Datum") |>
+  mutate(KielerWoche = ifelse(is.na(KielerWoche), 0, KielerWoche)) 
+```
+
+```{r train_data}
+glimpse(train_data)
+summary(train_data)
+```
+
+
+### Data Visualisations
+
+#### Sales Trends
+```{r}
+train_data |>
+  ggplot(aes(x = Datum, y = Umsatz)) +
+  geom_point()
+```
+From the sales figures, it seems like there are 6 sales points that are unusual due to recording amounts above 1000. Some seasonality can be seen where during mid-year, sales are higher than the rest.
+
+- Umsatz based on Warengruppe
+```{r}
+train_data |>
+  ggplot(aes(x = as.factor(Warengruppe), y = Umsatz)) +
+  geom_boxplot()
+```
+
+#### Sales Relationship
+
+- Kieler Woche Event vs Regular Days Observations
+```{r}
+train_data |>
+  ggplot(aes(x = as.factor(KielerWoche), y = Umsatz)) +
+  geom_boxplot()
+```
+From the plot above, it does not seem Kieler Woche event differentiate the number of sales amount. This is evident from the median sales between them that are very close, and so does the box in overall.
+
+
+- Weather Observations
+```{r}
+# Bewoelkung vs Umsatz
+train_data |>
+  ggplot(aes(x = as.factor(Bewoelkung), y = Umsatz)) +
+  geom_boxplot()
+
+# Temperatur vs Umsatz
+train_data |>
+  ggplot(aes(x = Temperatur, y = Umsatz)) +
+  geom_point()
+
+# Windgeschwindigkeit vs Umsatz
+train_data |>
+  ggplot(aes(x = as.factor(Windgeschwindigkeit), y = Umsatz)) +
+  geom_boxplot()
+
+# Wettercode vs Umsatz
+train_data |>
+  ggplot(aes(x = as.factor(Wettercode), y = Umsatz)) +
+  geom_boxplot()
+```
+Points taken:
+- It seems that Umsatz does not affected by Bewoelkung, as the numbers are pretty similar accross category. 
+- Temperature wise, it does not seem matter to the Umsatz, supported by the fact that even in the extreme condition, there are still some high amount of Umsatz.
+- Windgeschwindigkeit or wind speed does not seem matter to Umsatz either, as the boxplots shows that they are positioned within the same range, and also having similar median values.
+- Again, the same case also exist for Wettercode, where it does not influence Umsatz.
+
+In overall, it seems like weather does not play its part in influencing Umsatz, no matter how different the weather, Umsatz always have high and low amounts.
+
+
+- Correlation Matrix
+```{r}
+train_data |>
+  select(Warengruppe, Umsatz, KielerWoche, Bewoelkung, Temperatur, Windgeschwindigkeit, Wettercode) |>
+  cor(method = "pearson", use = "complete.obs") |>
+  corrplot(method = 'number')
+```
+From the corrplot above, there is no variables that has high correlation, supported by the fact that the highest correlation is only 0.53.
+
+
+#### Filtering Umsatz above 1000
+```{r}
+filtered_train_data <- train_data[train_data$Umsatz <= 1000, ]
+
+glimpse(filtered_train_data)
+```
+
+- Umsatz Trends
+```{r}
+filtered_train_data |>
+  ggplot(aes(x = Datum, y = Umsatz)) +
+  geom_point()
+```
+- Umsatz based on Warengruppe
+```{r}
+filtered_train_data |>
+  ggplot(aes(x = as.factor(Warengruppe), y = Umsatz)) +
+  geom_boxplot()
+```
+Based on the figure above, Warengruppe 2 is the most sold group, followed by 5, 3, 1, 4, 6.
+
+
+- Weather Observations
+```{r}
+# Bewoelkung vs Umsatz
+filtered_train_data |>
+  ggplot(aes(x = as.factor(Bewoelkung), y = Umsatz)) +
+  geom_boxplot()
+
+# Temperatur vs Umsatz
+filtered_train_data |>
+  ggplot(aes(x = Temperatur, y = Umsatz)) +
+  geom_point() +
+  geom_smooth()
+
+# Windgeschwindigkeit vs Umsatz
+filtered_train_data |>
+  ggplot(aes(x = Windgeschwindigkeit, y = Umsatz)) +
+  geom_point() +
+  geom_smooth()
+
+# Wettercode vs Umsatz
+filtered_train_data |>
+  ggplot(aes(x = as.factor(Wettercode), y = Umsatz)) +
+  geom_boxplot()
+```
