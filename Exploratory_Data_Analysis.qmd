@@ -1,0 +1,114 @@
+---
+title: "Exploratory_Data_Analysis"
+format: html
+author: "Shreyansh Mahtolia"
+---
+
+```{r}
+library(tidyverse)
+library(GGally)
+```
+
+
+```{r readdata}
+kiwodata <- read.csv("data/kiwo.csv")
+wetterdata <- read.csv("data/wetter.csv")
+traindata <- read.csv("data/train.csv")
+testdata <- read.csv("data/test.csv")
+```
+
+```{r datastats}
+head(traindata)
+str(traindata)
+summary(traindata)
+```
+
+Dates are in character type.
+Max Umsatz seems to be ridiculously high as compared to mean and 3rd quartile.
+
+```{r}
+sum(duplicated(traindata$id))
+```
+
+No duplicates found in training set
+
+```{r}
+ggplot(traindata, aes(x = as.factor(Warengruppe), y = Umsatz)) +
+  geom_boxplot() +
+  labs(title = "Sales By Product Category", x = "Warengruppe", y = "Umsatz")
+```
+
+A lot of outliers noticed and especially very high extreme values in 5 aka Cake sales. 
+On average or median, product 2 and 5 aka rolls and cake have better sales as compared to
+4 and 6 aka confectionery and seasonal bread.
+
+
+```{r}
+traindata$Datum <- as.Date(traindata$Datum)
+testdata$Datum <- as.Date(testdata$Datum)
+wetterdata$Datum <- as.Date(wetterdata$Datum)
+kiwodata$Datum <- as.Date(kiwodata$Datum)
+```
+
+
+```{r}
+ggplot(traindata, aes(x = Datum, y = Umsatz, color = as.factor(Warengruppe))) +
+  geom_line() +
+  labs(title = "Sales by Product Category", x = "Date", y = "Sales") +
+  facet_wrap(~Warengruppe)
+```
+
+Looking at time series results, it looks like towards the end of the year, cake[2] has quite high sales.
+Most products seem to follow a sinusoidal pattern peaking sales at the center half of the calendar
+year(except cake[2]). Seasonal bread[6] only seems to make sales during the end months of the year,
+hence suggesting the name, seasonal bread.
+
+```{r}
+traindata <- traindata %>%
+  mutate(
+    weekday = wday(Datum, label = TRUE)
+  )
+
+traindata %>%
+  group_by(weekday) %>%
+  summarise(avg_sales = mean(Umsatz)) %>%
+  ggplot(aes(x = weekday, y = avg_sales)) +
+  geom_col(fill = "steelblue") +
+  labs(title = "Avg Sales by Day")
+```
+
+Data suggests that mostly majority of the sales occur during weekends and Wednesday being
+the lowest amongst the days.
+
+```{r}
+summary(wetterdata)
+```
+
+A lot of NA's noticed in Wettercode(669) as well as in Bewoelkung(10). 
+
+```{r}
+ggplot(wetterdata, aes(x = Datum, y = Temperatur)) +
+  geom_line() +
+  labs(title = "Temperature Over Time")
+```
+
+Temperatures seem to dip during the start and mid of the year and peaking at the other times
+forming a notable sinusoidal pattern. Global warming effect can also be seen as the trough 
+values are getting bigger as well as the max temperatures rising over the years.
+
+```{r}
+fulldata <- traindata |>
+  left_join(wetterdata, by = "Datum") |>
+  na.omit()
+```
+
+```{r}
+fulldata |>
+  select(Umsatz,Bewoelkung,Temperatur,Windgeschwindigkeit,Wettercode) |>
+  ggpairs()
+
+```
+
+Sales and Temperature have +ve correlation (0.225) suggesting that sales increase with higher temp.
+With respect to wind speed and cloud coverage, not much strong relations can be observed.
+
