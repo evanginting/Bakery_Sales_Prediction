@@ -1,0 +1,163 @@
+---
+title: "EDA"
+format: html
+editor: visual
+---
+
+## Setup
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      warning = FALSE,
+                      message = FALSE)
+```
+
+```{r libraries}
+library(tidyverse)
+library(readr)
+library(lubridate)
+
+```
+
+```{r data}
+salePromo <- read_csv("data/kiwo.csv")
+weather <- read_csv("data/wetter.csv")
+train <- read_csv("data/train.csv") |> 
+  mutate(
+    Warengruppe = factor(Warengruppe,
+                         levels = 1:6,
+                         labels = c("Bread", "Rolls", "Croissant", "Confectionery", "Cake", "Seasonal Bread"))
+  )
+```
+
+## Data checking
+
+```{r structure}
+# View structure and summary
+glimpse(train)
+glimpse(weather)
+glimpse(salePromo)
+```
+
+
+```{r nas}
+# Check missing values
+colSums(is.na(train))
+colSums(is.na(weather))
+colSums(is.na(salePromo))
+```
+
+Training data set has no missing values. Weather data set has a few missing values in Bewoelkung and Wettercode columns. Bewoelkung is insignificant but Wettercode has a lot of missing values. Not useful as of now to rectify it. Can be filled up later. Sales promotion data set also has no missing values.
+
+```{r duplicates}
+# Check for duplicates
+sum(duplicated(train))
+sum(duplicated(weather))
+sum(duplicated(salePromo))
+
+```
+No Duplicate values in any data sets. 
+
+```{r dataTypes}
+train <- train %>%
+  mutate(Datum = ymd(Datum),
+         Warengruppe = as.factor(Warengruppe))
+
+weather <- weather %>%
+  mutate(Datum = ymd(Datum))
+
+salePromo <- salePromo %>%
+  mutate(Datum = ymd(Datum))
+```
+
+All data types corrected.
+
+## Data Wrangling
+
+```{r merger}
+data_combined <- train %>%
+  left_join(weather, by = "Datum")
+
+data_combined <- data_combined %>%
+  mutate(is_sale = Datum %in% salePromo$Datum)
+```
+
+Weather data is merged into training data. Flags are introduced in training dataset for keilerwoche dates from salePromo data.
+
+## Summary and Stats
+
+```{r summary}
+# Umsatz (sales) by category
+data_combined %>%
+  group_by(Warengruppe) %>%
+  summarise(mean_umsatz = mean(Umsatz),
+            sd_umsatz = sd(Umsatz),
+            min_umsatz = min(Umsatz),
+            max_umsatz = max(Umsatz))
+
+# Plot sales by category
+ggplot(data_combined, aes(x = Datum, y = Umsatz, color = factor(Warengruppe))) +
+  geom_line(alpha = 0.6) +
+  facet_wrap(~ Warengruppe, scales = "free_y") +
+  labs(title = "Sales over Time by Product Category", color = "Category")
+
+```
+
+Rolls and Cake have the highest average sales, but also high variability (std dev).
+
+Seasonal Bread has the lowest average sales, likely due to being sold only during certain times.
+
+Cake has the highest maximum sale value — possibly due to occasional spikes in demand (e.g. holidays or events).
+
+The plot shows that there is definitely seasonality in sales every year and some products have similar trends while some differ. Time series decomposition is necessary to understand the sales deeply. 
+
+```{r}
+# Plot temperature trends
+ggplot(weather, aes(x = Datum, y = Temperatur)) +
+  geom_line(color = "red") +
+  labs(title = "Temperature Over Time")
+
+# Plot cloud coverage distribution
+ggplot(weather, aes(x = Bewoelkung)) +
+  geom_bar(fill = "steelblue") +
+  labs(title = "Distribution of Cloud Coverage")
+
+# Correlation between weather and sales
+ggplot(data_combined, aes(x = Temperatur, y = Umsatz)) +
+  geom_point(alpha = 0.3) +
+  geom_smooth(method = "lm") +
+  facet_wrap(~ Warengruppe) +
+  labs(title = "Sales vs Temperature by Category")
+```
+
+Bread and Confectionery are mostly temperature-insensitive, showing little to no change with fluctuating temperatures.
+
+Rolls and Croissants demonstrate an increase in sales with temperature, suggesting that they are more likely to be purchased during warmer weather.
+
+Cake shows a small positive trend, with slightly higher sales in warmer conditions, likely driven by seasonal factors or consumer behavior in certain temperature ranges.
+
+Seasonal bread is mainly affected by colder temperatures, with a decrease in sales as temperatures rise, highlighting its seasonality.
+
+```{r}
+# Compare sales during vs outside Kieler Woche
+data_combined %>%
+  group_by(is_sale, Warengruppe) %>%
+  summarise(mean_umsatz = mean(Umsatz),
+            sd_umsatz = sd(Umsatz)) %>%
+  pivot_wider(names_from = is_sale, values_from = mean_umsatz, names_prefix = "sale_")
+
+# Visualize
+ggplot(data_combined, aes(x = Datum, y = Umsatz, color = is_sale)) +
+  geom_line(alpha = 0.4) +
+  facet_wrap(~ Warengruppe) +
+  labs(title = "Effect of Kieler Woche on Sales")
+
+```
+
+Sales for all categories appear to increase during Kieler Woche (e.g., Rolls go from ~399 → ~539).
+
+Rolls and Croissant show large spikes in sales during KiWo.
+
+This confirms that Kieler Woche significantly impacts sales, especially for high-demand or on-the-go items like Rolls and Croissants.
+
+Some categories (like Confectionery) may show less of an increase, or even a slight decrease.
