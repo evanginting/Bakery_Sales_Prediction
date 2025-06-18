@@ -173,11 +173,38 @@ year(except cake[2]). Seasonal bread[6] only seems to make sales during the end 
 hence suggesting the name, seasonal bread.
 
 - Umsatz based on Warengruppe
+
 ```{r}
 train_data |>
   ggplot(aes(x = as.factor(Warengruppe), y = Umsatz)) +
   geom_boxplot()
 ```
+
+```{r summary}
+# Umsatz (sales) by category
+train_data %>%
+  group_by(Warengruppe) %>%
+  summarise(mean_umsatz = mean(Umsatz),
+            sd_umsatz = sd(Umsatz),
+            min_umsatz = min(Umsatz),
+            max_umsatz = max(Umsatz))
+
+# Plot sales by category
+ggplot(train_data, aes(x = Datum, y = Umsatz, color = factor(Warengruppe))) +
+  geom_line(alpha = 0.6) +
+  facet_wrap(~ Warengruppe, scales = "free_y") +
+  labs(title = "Sales over Time by Product Category", color = "Category")
+
+```
+
+Rolls and Cake have the highest average sales, but also high variability (std dev).
+
+Seasonal Bread has the lowest average sales, likely due to being sold only during certain times.
+
+Cake has the highest maximum sale value — possibly due to occasional spikes in demand (e.g. holidays or events).
+
+The plot shows that there is definitely seasonality in sales every year and some products have similar trends while some differ. Time series decomposition is necessary to understand the sales deeply. 
+
 
 #### Sales Relationship
 
@@ -220,6 +247,48 @@ Points taken:
 
 In overall, it seems like weather does not play its part in influencing Umsatz, no matter how different the weather, Umsatz always have high and low amounts.
 
+# Correlation between weather and sales
+
+```{r}
+
+ggplot(train_data, aes(x = Temperatur, y = Umsatz)) +
+  geom_point(alpha = 0.3) +
+  geom_smooth(method = "lm") +
+  facet_wrap(~ Warengruppe) +
+  labs(title = "Sales vs Temperature by Category")
+```
+
+Bread and Confectionery are mostly temperature-insensitive, showing little to no change with fluctuating temperatures.
+
+Rolls and Croissants demonstrate an increase in sales with temperature, suggesting that they are more likely to be purchased during warmer weather.
+
+Cake shows a small positive trend, with slightly higher sales in warmer conditions, likely driven by seasonal factors or consumer behavior in certain temperature ranges.
+
+Seasonal bread is mainly affected by colder temperatures, with a decrease in sales as temperatures rise, highlighting its seasonality.
+
+```{r}
+# Compare sales during vs outside Kieler Woche
+train_data %>%
+  group_by(KielerWoche, Warengruppe) %>%
+  summarise(mean_umsatz = mean(Umsatz),
+            sd_umsatz = sd(Umsatz)) %>%
+  pivot_wider(names_from = KielerWoche, values_from = mean_umsatz, names_prefix = "sale_")
+
+# Visualize
+ggplot(train_data, aes(x = Datum, y = Umsatz, color = KielerWoche)) +
+  geom_line(alpha = 0.4) +
+  facet_wrap(~ Warengruppe) +
+  labs(title = "Effect of Kieler Woche on Sales")
+
+```
+
+Sales for all categories appear to increase during Kieler Woche (e.g., Rolls go from ~399 → ~539).
+
+Rolls and Croissant show large spikes in sales during KiWo.
+
+This confirms that Kieler Woche significantly impacts sales, especially for high-demand or on-the-go items like Rolls and Croissants.
+
+Some categories (like Confectionery) may show less of an increase, or even a slight decrease.
 
 - Correlation Matrix
 ```{r}
@@ -250,6 +319,7 @@ filtered_train_data |>
   ggplot(aes(x = as.factor(Warengruppe), y = Umsatz)) +
   geom_boxplot()
 ```
+
 Based on the figure above, Warengruppe 2 is the most sold group, followed by 5, 3, 1, 4, 6.
 
 
