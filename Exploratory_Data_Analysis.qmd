@@ -17,6 +17,7 @@ library(tidyverse)
 library(tidymodels)
 library(here)
 library(corrplot)
+library(GGally)
 ```
 
 ## Data Exploration
@@ -43,7 +44,6 @@ sum(is.na(kiwo))
 ```
 There is no missing value from `kiwo` dataset.
 
-
 #### Train Dataset
 
 - Summary, Row Counts and Missing Value
@@ -52,7 +52,23 @@ summary(train)
 nrow(train)
 sum(is.na(train))
 ```
-There is no missing value from `train` dataset.
+There is no missing value from `train` dataset. Dates are in character type.
+Max Umsatz seems to be ridiculously high as compared to mean and 3rd quartile.
+
+
+```{r}
+train$Datum <- as.Date(train$Datum)
+test$Datum <- as.Date(test$Datum)
+wetter$Datum <- as.Date(wetter$Datum)
+kiwo$Datum <- as.Date(kiwo$Datum)
+```
+
+
+```{r}
+sum(duplicated(train$id))
+```
+
+No duplicates found in training set
 
 - Data Distribution
 ```{r train_dist}
@@ -69,6 +85,16 @@ train |>
   group_by(Warengruppe) |>
   summarise(n = n())
 ```
+
+```{r}
+ggplot(train, aes(x = as.factor(Warengruppe), y = Umsatz)) +
+  geom_boxplot() +
+  labs(title = "Sales By Product Category", x = "Warengruppe", y = "Umsatz")
+```
+
+A lot of outliers noticed and especially very high extreme values in 5 aka Cake sales. 
+On average or median, product 2 and 5 aka rolls and cake have better sales as compared to
+4 and 6 aka confectionery and seasonal bread.
 
 
 #### Test Dataset
@@ -132,6 +158,19 @@ train_data |>
   geom_point()
 ```
 From the sales figures, it seems like there are 6 sales points that are unusual due to recording amounts above 1000. Some seasonality can be seen where during mid-year, sales are higher than the rest.
+
+
+```{r}
+ggplot(train, aes(x = Datum, y = Umsatz, color = as.factor(Warengruppe))) +
+  geom_line() +
+  labs(title = "Sales by Product Category", x = "Date", y = "Sales") +
+  facet_wrap(~Warengruppe)
+```
+
+Looking at time series results, it looks like towards the end of the year, cake[2] has quite high sales.
+Most products seem to follow a sinusoidal pattern peaking sales at the center half of the calendar
+year(except cake[2]). Seasonal bread[6] only seems to make sales during the end months of the year,
+hence suggesting the name, seasonal bread.
 
 - Umsatz based on Warengruppe
 ```{r}
