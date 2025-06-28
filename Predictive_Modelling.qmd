@@ -1,0 +1,306 @@
+---
+title: "Predicytive_Analysis"
+format: html
+editor: visual
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# List of libraries
+library(tidymodels)
+library(tidyverse)
+library(ranger)
+library(randomForestSRC)
+library(randomForest)
+library(data.table)
+library(xgboost)
+library(vip)
+library(rpart)
+library(MLmetrics)
+library(doParallel)
+library(here)
+library(zoo)
+```
+
+
+## Preparing the Data for Predictive Modelling
+
+```{r}
+# Load cleaned data (by excluding 6 outliers)
+DT <- read_csv(here("data/clean_data.csv"), col_names = TRUE)
+
+glimpse(DT)
+
+sum(is.na(DT))
+```
+
+### Treating Missing Values
+To ensure the accuracy of predictive model, considering that we are working with time-series data, then missing values will be treated by imputing values from nearest available values based on date (`Datum`). For example, if `Bewoelkung` on 11/11/2017 is missing than it will be imputed either from values of the date before/after. This is to make the data as real as possible.
+
+```{r}
+# Checking Bewoelkung, Temperatur, Windgeschwindigkeit for each date
+DaBew <- DT |>
+  select(Datum, Bewoelkung, Temperatur, Windgeschwindigkeit) |>
+  distinct()
+  ## for checking purposes
+  ### group_by(Datum) |>
+  ### summarise(n = n()) |>
+  ### filter(n > 1)
+
+# Imputing missing values with the nearest available values and save it to a new data object
+DaBew <- DaBew %>%
+  mutate(Bewoelkung = na.approx(Bewoelkung, x = Datum, rule = 2),
+         Temperatur = na.approx(Temperatur, x = Datum, rule = 2),
+         Windgeschwindigkeit = na.approx(Windgeschwindigkeit, x = Datum, rule = 2))
+
+# Rejoin the imputed values to the original data
+## exclude Wettercode variable due to irrelevant
+DT_alt <- DT |>
+  select(id, Datum, Warengruppe, Umsatz, KielerWoche) |>
+  left_join(DaBew, by = "Datum")
+```
+
+
+## Preparing the full Train and full Test data
+
+### Imput the missing values in full train data
+```{r}
+# Join the imputed values to the full training data
+## exclude Wettercode variable due to irrelevant
+train_data <- train_data |>
+  select(id, Datum, Warengruppe, Umsatz, KielerWoche) |>
+  left_join(DaBew, by = "Datum")
+
+## code for check
+### sum(is.na(train_data$Bewoelkung))
+### sum(is.na(train_data$Temperatur))
+### sum(is.na(train_data$Windgeschwindigkeit))
+```
+
+
+### Merging the test data with other dataset (kiwo and wetter)
+```{r merge}
+test_data <- test |>
+  left_join(kiwo, by = "Datum") |>
+  left_join(wetter, by = "Datum") |>
+  mutate(KielerWoche = ifelse(is.na(KielerWoche), 0, KielerWoche)) 
+
+# Checking Bewoelkung, Temperatur, Windgeschwindigkeit for each date
+DaBew_test <- test_data |>
+  select(Datum, Bewoelkung, Temperatur, Windgeschwindigkeit) |>
+  distinct()
+  ## for checking purposes
+  ### group_by(Datum) |>
+  ### summarise(n = n()) |>
+  ### filter(n > 1)
+
+# Imputing missing values with the nearest available values and save it to a new data object
+DaBew_test <- DaBew_test %>%
+  mutate(Bewoelkung = na.approx(Bewoelkung, x = Datum, rule = 2),
+         Temperatur = na.approx(Temperatur, x = Datum, rule = 2),
+         Windgeschwindigkeit = na.approx(Windgeschwindigkeit, x = Datum, rule = 2))
+
+# Join the imputed values to the full training data
+## exclude Wettercode variable due to irrelevant
+test_data <- test_data |>
+  select(id, Datum, Warengruppe, KielerWoche) |>
+  left_join(DaBew_test, by = "Datum")
+
+glimpse(test_data)
+```
+
+
+### Split data into train and test data sets
+The data will be splitted into training and test set by 2/3 proportion and by considering `Warengruppe` (Product Group).
+```{r}
+# Splitting the data
+set.seed(2025)
+DT_initial <- initial_split(DT_alt, prop = 2/3, strata = Warengruppe)
+DT_train <- training(DT_initial)
+DT_test <- testing(DT_initial)
+```
+
+Checking for split distribution
+```{r}
+# Check for split distribution (train data)
+DT_train |>
+  select(Warengruppe) |>
+  group_by(Warengruppe) |>
+  summarise(count = n())
+
+# Check for split distribution (test data)
+DT_test |>
+  select(Warengruppe) |>
+  group_by(Warengruppe) |>
+  summarise(count = n())
+```
+
+## Predictive Modelling
+
+### Random Forest Model: Option 1
+We are going to try to build a default model where all variables included using Random Forest
+```{r}
+# Build RF model
+rf_spec <- rand_forest(mode = "regression") %>%
+  set_engine("randomForest")
+
+set.seed(2025)
+rf_fit <- rf_spec %>%
+  fit(Umsatz ~ Warengruppe+KielerWoche+Bewoelkung+Temperatur+Windgeschwindigkeit, data = DT_train)
+
+# Make predictions on the preprocessed testing data
+rf_tr <- predict(rf_fit, new_data = DT_train)
+rf_ts <- predict(rf_fit, new_data = DT_test)
+
+# Plot variable importance
+vip::vip(rf_fit$fit)
+```
+
+#### Evaluate the Model
+```{r}
+# RF Default Results
+## Training set evaluation
+results_train_rf <- rf_tr %>%
+  bind_cols(DT_train) %>%
+  select(.pred, Umsatz) %>%
+  rename(truth = Umsatz) %>%
+  mutate(model = "RF_Op1")
+
+## Test set evaluation
+results_test_rf <- rf_ts %>%
+  bind_cols(DT_test) %>%
+  select(.pred, Umsatz) %>%
+  rename(truth = Umsatz) %>%
+  mutate(model = "RF_Op1")
+
+# Show the evaluation metrics
+## Training set
+results_train_rf %>%
+  group_by(model) %>%
+  summarise(RMSE = RMSE(.pred, truth),
+            R_Square = R2_Score(.pred, truth),
+            MAE = MAE(.pred, truth),
+            MAPE = MAPE(.pred, truth))
+
+## Test set
+results_test_rf %>%
+  group_by(model) %>%
+  summarise(RMSE = RMSE(.pred, truth),
+            R_Square = R2_Score(.pred, truth),
+            MAE = MAE(.pred, truth),
+            MAPE = MAPE(.pred, truth))
+```
+
+
+#### Prediction vs Actual Comparison
+```{r viz_comparison_rf, warning = FALSE, error = FALSE}
+# In a visualisation
+results_test_rf %>%
+  mutate(train = "testing") %>%
+  bind_rows(results_train_rf %>%
+              mutate(train = "training")) %>%
+  ggplot(aes(.pred, truth, , color = model)) +
+  geom_abline(lty = 2, size = 0.75, linetype = "dashed") +
+  geom_point(alpha = 0.7) +
+  facet_wrap(~train)
+
+# In a table
+results_tbl_Op1 <- DT_test %>%
+  select(id, Datum, Umsatz, Warengruppe, KielerWoche, Bewoelkung, Temperatur, Windgeschwindigkeit) %>%
+  bind_cols(Predicted_Umsatz = rf_ts$.pred)
+```
+
+
+### Random Forest Model: Option 2
+
+In this option, we are going to try to include `Warengruppe` & `Temperature` to fit the model because they came out having big importance to the model that we try to fit in the Option 1.
+```{r}
+set.seed(2025)
+rf_fit_2 <- rf_spec %>%
+  fit(Umsatz ~ Datum+Warengruppe+Temperatur, data = DT_train)
+
+# Make predictions on the preprocessed testing data
+rf_tr_2 <- predict(rf_fit_2, new_data = DT_train)
+rf_ts_2 <- predict(rf_fit_2, new_data = DT_test)
+
+# Plot variable importance
+vip::vip(rf_fit_2$fit)
+```
+
+#### Evaluate the Model
+```{r}
+# RF Default Results
+## Training set evaluation
+results_train_rf_2 <- rf_tr_2 %>%
+  bind_cols(DT_train) %>%
+  select(.pred, Umsatz) %>%
+  rename(truth = Umsatz) %>%
+  mutate(model = "RF_Op2")
+
+## Test set evaluation
+results_test_rf_2 <- rf_ts_2 %>%
+  bind_cols(DT_test) %>%
+  select(.pred, Umsatz) %>%
+  rename(truth = Umsatz) %>%
+  mutate(model = "RF_Op2")
+
+# Show the evaluation metrics
+## Training set
+results_train_rf_2 %>%
+  group_by(model) %>%
+  summarise(RMSE = RMSE(.pred, truth),
+            R_Square = R2_Score(.pred, truth),
+            MAE = MAE(.pred, truth),
+            MAPE = MAPE(.pred, truth))
+
+## Test set
+results_test_rf_2 %>%
+  group_by(model) %>%
+  summarise(RMSE = RMSE(.pred, truth),
+            R_Square = R2_Score(.pred, truth),
+            MAE = MAE(.pred, truth),
+            MAPE = MAPE(.pred, truth))
+```
+
+
+#### Prediction vs Actual Comparison
+```{r viz_comparison_rf, warning = FALSE, error = FALSE}
+# In a visualisation
+results_test_rf_2 %>%
+  mutate(train = "testing") %>%
+  bind_rows(results_train_rf_2 %>%
+              mutate(train = "training")) %>%
+  ggplot(aes(.pred, truth, , color = model)) +
+  geom_abline(lty = 2, size = 0.75, linetype = "dashed") +
+  geom_point(alpha = 0.7) +
+  facet_wrap(~train)
+
+# In a table
+results_tbl_Op2 <- DT_test %>%
+  select(id, Datum, Umsatz, Warengruppe, KielerWoche, Bewoelkung, Temperatur, Windgeschwindigkeit) %>%
+  bind_cols(Predicted_Umsatz = rf_ts_2$.pred)
+```
+
+#### Testing for Submission
+```{r}
+set.seed(2025)
+final_rf_fit <- rf_spec %>%
+  fit(Umsatz ~ Warengruppe+Temperatur, data = train_data)
+
+# Make predictions on the submission testing data
+rf_ts_sbmt <- predict(final_rf_fit, new_data = test_data)
+
+# In a table
+results_tbl_sbmt1 <- test_data %>%
+  select(id, Datum, Warengruppe, KielerWoche, Bewoelkung, Temperatur, Windgeschwindigkeit) %>%
+  bind_cols(Umsatz = rf_ts_sbmt$.pred)
+```
+
+Saving final dataset
+
+```{r}
+results_tbl_sbmt1 |>
+  select(id, Umsatz) |>
+  write_csv("data/submission_1.csv")
+```
