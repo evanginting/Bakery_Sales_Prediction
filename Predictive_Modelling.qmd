@@ -1,5 +1,5 @@
 ---
-title: "Predicytive_Analysis"
+title: "Predictive_Analysis"
 format: html
 editor: visual
 ---
@@ -21,6 +21,7 @@ library(MLmetrics)
 library(doParallel)
 library(here)
 library(zoo)
+library(finetune)
 ```
 
 
@@ -59,6 +60,34 @@ DaBew <- DaBew %>%
 DT_alt <- DT |>
   select(id, Datum, Warengruppe, Umsatz, KielerWoche) |>
   left_join(DaBew, by = "Datum")
+
+# Add new variable `month`
+DT_alt$month <- as.numeric(format(DT_alt$Datum, "%m"))
+```
+
+### Split  data into train and test data sets
+The data will be splitted into training and test set by 2/3 proportion and by considering `Warengruppe` (Product Group).
+```{r}
+# Splitting the data
+set.seed(2025)
+DT_initial <- initial_split(DT_alt, prop = 2/3, strata = Warengruppe)
+DT_train <- training(DT_initial)
+DT_test <- testing(DT_initial)
+```
+
+Checking for split distribution
+```{r}
+# Check for split distribution (train data)
+DT_train |>
+  select(Warengruppe) |>
+  group_by(Warengruppe) |>
+  summarise(count = n())
+
+# Check for split distribution (test data)
+DT_test |>
+  select(Warengruppe) |>
+  group_by(Warengruppe) |>
+  summarise(count = n())
 ```
 
 
@@ -76,6 +105,9 @@ train_data <- train_data |>
 ### sum(is.na(train_data$Bewoelkung))
 ### sum(is.na(train_data$Temperatur))
 ### sum(is.na(train_data$Windgeschwindigkeit))
+
+# Add new variable `month`
+train_data$month <- as.numeric(format(train_data$Datum, "%m"))
 ```
 
 
@@ -107,34 +139,11 @@ test_data <- test_data |>
   select(id, Datum, Warengruppe, KielerWoche) |>
   left_join(DaBew_test, by = "Datum")
 
+test_data$month <- as.numeric(format(test_data$Datum, "%m"))
+
 glimpse(test_data)
 ```
 
-
-### Split data into train and test data sets
-The data will be splitted into training and test set by 2/3 proportion and by considering `Warengruppe` (Product Group).
-```{r}
-# Splitting the data
-set.seed(2025)
-DT_initial <- initial_split(DT_alt, prop = 2/3, strata = Warengruppe)
-DT_train <- training(DT_initial)
-DT_test <- testing(DT_initial)
-```
-
-Checking for split distribution
-```{r}
-# Check for split distribution (train data)
-DT_train |>
-  select(Warengruppe) |>
-  group_by(Warengruppe) |>
-  summarise(count = n())
-
-# Check for split distribution (test data)
-DT_test |>
-  select(Warengruppe) |>
-  group_by(Warengruppe) |>
-  summarise(count = n())
-```
 
 ## Predictive Modelling
 
@@ -218,7 +227,7 @@ In this option, we are going to try to include `Warengruppe` & `Temperature` to 
 ```{r}
 set.seed(2025)
 rf_fit_2 <- rf_spec %>%
-  fit(Umsatz ~ Datum+Warengruppe+Temperatur, data = DT_train)
+  fit(Umsatz ~ Warengruppe+Temperatur, data = DT_train)
 
 # Make predictions on the preprocessed testing data
 rf_tr_2 <- predict(rf_fit_2, new_data = DT_train)
@@ -282,7 +291,7 @@ results_tbl_Op2 <- DT_test %>%
   bind_cols(Predicted_Umsatz = rf_ts_2$.pred)
 ```
 
-#### Testing for Submission
+#### 1st Submission
 ```{r}
 set.seed(2025)
 final_rf_fit <- rf_spec %>%
@@ -303,4 +312,467 @@ Saving final dataset
 results_tbl_sbmt1 |>
   select(id, Umsatz) |>
   write_csv("data/submission_1.csv")
+```
+
+
+### Random Forest Model: Option 3
+
+In this option, we are going to try to include `Warengruppe`, `Temperature`, and new variable `month` to fit the model because they came out having big importance to the model that we try to fit in the Option 1.
+```{r}
+set.seed(2025)
+rf_fit_3 <- rf_spec %>%
+  fit(Umsatz ~ Warengruppe+Temperatur+month, data = DT_train)
+
+# Make predictions on the preprocessed testing data
+rf_tr_3 <- predict(rf_fit_2, new_data = DT_train)
+rf_ts_3 <- predict(rf_fit_2, new_data = DT_test)
+
+# Plot variable importance
+vip::vip(rf_fit_3$fit)
+```
+
+#### Evaluate the Model
+```{r}
+# RF Default Results
+## Training set evaluation
+results_train_rf_3 <- rf_tr_3 %>%
+  bind_cols(DT_train) %>%
+  select(.pred, Umsatz) %>%
+  rename(truth = Umsatz) %>%
+  mutate(model = "RF_Op3")
+
+## Test set evaluation
+results_test_rf_3 <- rf_ts_3 %>%
+  bind_cols(DT_test) %>%
+  select(.pred, Umsatz) %>%
+  rename(truth = Umsatz) %>%
+  mutate(model = "RF_Op3")
+
+# Show the evaluation metrics
+## Training set
+results_train_rf_3 %>%
+  group_by(model) %>%
+  summarise(RMSE = RMSE(.pred, truth),
+            R_Square = R2_Score(.pred, truth),
+            MAE = MAE(.pred, truth),
+            MAPE = MAPE(.pred, truth))
+
+## Test set
+results_test_rf_3 %>%
+  group_by(model) %>%
+  summarise(RMSE = RMSE(.pred, truth),
+            R_Square = R2_Score(.pred, truth),
+            MAE = MAE(.pred, truth),
+            MAPE = MAPE(.pred, truth))
+```
+
+
+#### Prediction vs Actual Comparison
+```{r viz_comparison_rf, warning = FALSE, error = FALSE}
+# In a visualisation
+results_test_rf_3 %>%
+  mutate(train = "testing") %>%
+  bind_rows(results_train_rf_3 %>%
+              mutate(train = "training")) %>%
+  ggplot(aes(.pred, truth, , color = model)) +
+  geom_abline(lty = 2, size = 0.75, linetype = "dashed") +
+  geom_point(alpha = 0.7) +
+  facet_wrap(~train)
+
+# In a table
+results_tbl_Op3 <- DT_test %>%
+  select(id, Datum, Umsatz, Warengruppe, KielerWoche, Bewoelkung, Temperatur, Windgeschwindigkeit) %>%
+  bind_cols(Predicted_Umsatz = rf_ts_3$.pred)
+```
+
+
+### Random Forest Model: Option 4
+In this option, we are going to try to include `Warengruppe`, `Temperature`, and new variable `month` to fit the model. Starting from this, a cross-validation data will be created and hyperparameter tuning will be utilised.
+```{r}
+# Create a cross-validation data for resampling purposes during hyperparameter tuning
+## Will be used for all hyperparameter tuning (across different model)
+set.seed(2022)
+DT_folds <- vfold_cv(DT_train, v = 5, repeats = 2, strata = Warengruppe)
+```
+
+#### Build the Model
+```{r}
+# Build RF Tuned Model
+rf_tuned_spec <- rand_forest(mode = "regression",
+                       mtry = tune(),
+                       min_n = tune(),
+                       trees = tune()) %>%
+                 set_engine("randomForest")
+
+# Create a recipe for preprocessing
+rf_recipe_4 <- recipe(Umsatz ~ Warengruppe+Temperatur+month, data = DT_train)
+
+# Create a workflow
+rf_tuned_workflow_4 <- workflow() %>%
+  add_recipe(rf_recipe_4) %>%
+  add_model(rf_tuned_spec)
+
+# Set-up the hyperparameter tuning
+rf_tuned_grid_4 <- grid_regular(
+  mtry(range = c(1,2)),
+  min_n(range = c(1,15)),
+  trees(range = c(500,2000)),
+  levels = 5)
+
+# Perform the hyperparameter tuning
+set.seed(2025)
+rf_random_tune_4 <- tune_grid(
+  rf_tuned_workflow_4,
+  resamples = DT_folds,
+  grid = rf_tuned_grid_4,
+  metrics = metric_set(rmse, rsq, mae, mape)
+)
+
+# Show the best configurations
+show_best(rf_random_tune_4, metric = "mape", n = 3)
+
+# Fit the best model into the training set
+set.seed(2025)
+rf_random_tuned_fit_4 <- finalize_workflow(rf_tuned_workflow_4, select_best(rf_random_tune_4, metric = "mape")) %>%
+    fit(DT_train)
+
+## saveRDS(rf_random_tuned_fit_2, file = "./Final_report/Final_report_files/REE_fit1.rds")
+
+# Apply the trained recipe to the testing data
+# 'bake()' will apply all recipe steps (e.g., imputation, normalization) to the testing dataset
+DT_train_prep <- bake(prep(rf_recipe_4), new_data = DT_train)
+DT_test_prep <- bake(prep(rf_recipe_4), new_data = DT_test)
+
+# Make predictions on the preprocessed testing data
+rf_tr_rdm_tuned_4_pred <- predict(rf_random_tuned_fit_4, new_data = DT_train_prep)
+rf_ts_rdm_tuned_4_pred <- predict(rf_random_tuned_fit_4, new_data = DT_test_prep)
+```
+
+#### Evaluate the Model
+```{r}
+# RF Tuned Results for 
+## Training set evaluation
+results_train_rf_rdm_tuned_4 <- rf_tr_rdm_tuned_4_pred %>%
+  bind_cols(DT_train) %>%
+  select(.pred, Umsatz) %>%
+  rename(truth = Umsatz) %>%
+  mutate(model = "RF_Rdm_Tuned_1")
+
+## Test set evaluation
+results_test_rf_rdm_tuned_4 <- rf_ts_rdm_tuned_4_pred %>%
+  bind_cols(DT_test) %>%
+  select(.pred, Umsatz) %>%
+  rename(truth = Umsatz) %>%
+  mutate(model = "RF_Rdm_Tuned_1")
+
+# Merge the results
+## Training set
+results_train <- bind_rows(results_train_rf, results_train_rf_rdm_tuned_4)
+
+## Test set
+results_test <- bind_rows(results_test_rf, results_test_rf_rdm_tuned_4)
+
+# Show the evaluation metrics for every model
+## Training set
+results_train %>%
+  group_by(model) %>%
+  summarise(RMSE = RMSE(.pred, truth),
+            R_Square = R2_Score(.pred, truth),
+            MAE = MAE(.pred, truth),
+            MAPE = MAPE(.pred, truth))
+
+## Test set
+results_test %>%
+  group_by(model) %>%
+  summarise(RMSE = RMSE(.pred, truth),
+            R_Square = R2_Score(.pred, truth),
+            MAE = MAE(.pred, truth),
+            MAPE = MAPE(.pred, truth))
+```
+
+#### Prediction vs Actual Comparison 
+```{r viz_comparison2, warning = FALSE, error = FALSE}
+results_test %>%
+  mutate(train = "testing") %>%
+  bind_rows(results_train %>%
+              mutate(train = "training")) %>%
+  ggplot(aes(truth, .pred, color = model)) +
+  geom_abline(lty = 2, size = 0.75, linetype = "dashed") +
+  geom_point(alpha = 0.7) +
+  facet_wrap(~train)
+```
+
+#### 2nd Submission
+```{r}
+# Fit the best model into the full training set
+set.seed(2025)
+final_rf_tuned_fit <- finalize_workflow(rf_tuned_workflow_4, select_best(rf_random_tune_4, metric = "mape")) %>%
+    fit(train_data)
+
+# Make predictions on the submission testing data
+rf_ts_tuned_sbmt <- predict(final_rf_tuned_fit, new_data = test_data)
+
+# In a table
+results_tbl_sbmt2 <- test_data %>%
+  select(id, Datum, Warengruppe, KielerWoche, Bewoelkung, Temperatur, Windgeschwindigkeit, month) %>%
+  bind_cols(Umsatz = rf_ts_tuned_sbmt$.pred)
+```
+
+Saving final dataset
+
+```{r}
+results_tbl_sbmt2 |>
+  select(id, Umsatz) |>
+  write_csv("data/submission_3.csv")
+```
+
+### XGBoost Model: Option 1
+In this option, we are going to build the model using XGBoost method by including `Warengruppe`, `Temperature`, and new variable `month` to fit the model. Starting from this, a cross-validation data will be created and hyperparameter tuning will be utilised.
+
+#### Build the Model
+```{r}
+# Build XGBoost Tuned Model
+xgb_tuned_spec <- boost_tree(trees = 2000,
+                             tree_depth = tune(),
+                             learn_rate = tune(),
+                             loss_reduction = tune(),
+                             min_n = tune(),
+                             sample_size = tune(),  
+                             mtry = tune()) %>%
+                 set_engine("xgboost") %>%
+                 set_mode("regression")
+
+# Define the recipe for XGBoost
+xgb_recipe <- recipe(Umsatz ~ Warengruppe+Temperatur+month, data = DT_train) 
+
+# XGB tune workflow
+xgb_tuned_workflow <- workflow() %>%
+  add_model(xgb_tuned_spec) %>%
+  add_recipe(xgb_recipe)
+
+xgb_grid <- grid_latin_hypercube(
+  tree_depth(),
+  min_n(),
+  loss_reduction(),
+  sample_size = sample_prop(),
+  finalize(mtry(), DT_train),
+  learn_rate(),
+  size = 20
+)
+
+doParallel::registerDoParallel()
+
+set.seed(2025)
+xgb_res <- tune_grid(
+  xgb_tuned_workflow,
+  resamples = DT_folds,
+  grid = xgb_grid,
+  metrics = metric_set(rmse, rsq, mae, mape),
+  control = control_grid(save_pred  = TRUE)
+)
+
+# Show the best configurations
+show_best(xgb_res, metric = "mape", n = 3)
+
+# Fit the best model into the training set
+set.seed(2025)
+xgb_tuned_fit <- finalize_workflow(xgb_tuned_workflow, select_best(xgb_res, metric = "mape")) %>%
+    fit(DT_train)
+
+# Make predictions on the test set
+xgb_train_predictions <- predict(xgb_tuned_fit, new_data = DT_train)
+
+# Make predictions on the test set
+xgb_test_predictions <- predict(xgb_tuned_fit, new_data = DT_test)
+```
+
+
+#### Evaluate the Model
+```{r}
+# Evaluate performance on training data
+xgb_train_results <- xgb_train_predictions %>%
+  bind_cols(DT_train) %>%
+  dplyr::select(.pred, Umsatz) %>%
+  rename(truth = Umsatz) %>%
+  mutate(model = "XGBoost_Tuned")
+
+# Evaluate performance on test data
+xgb_test_results <- xgb_test_predictions %>%
+  bind_cols(DT_test) %>%
+  dplyr::select(.pred, Umsatz) %>%
+  rename(truth = Umsatz) %>%
+  mutate(model = "XGBoost_Tuned")
+
+# Merge the results
+## Training set
+results_train <- bind_rows(results_train, xgb_train_results)
+
+## Test set
+results_test <- bind_rows(results_test, xgb_test_results)
+
+
+# Show the evaluation metrics for every model
+## Training set
+results_train %>%
+  group_by(model) %>%
+  summarise(RMSE = RMSE(.pred, truth),
+            R_Square = R2_Score(.pred, truth),
+            MAE = MAE(.pred, truth),
+            MAPE = MAPE(.pred, truth))
+
+## Test set
+results_test %>%
+  group_by(model) %>%
+  summarise(RMSE = RMSE(.pred, truth),
+            R_Square = R2_Score(.pred, truth),
+            MAE = MAE(.pred, truth),
+            MAPE = MAPE(.pred, truth))
+```
+
+#### 3rd Submission
+```{r}
+# Fit the best model into the full training set
+set.seed(2025)
+final_xgb_tuned_fit <- finalize_workflow(xgb_tuned_workflow, select_best(xgb_res, metric = "mape")) %>%
+    fit(train_data)
+
+# Make predictions on the submission testing data
+xgb_ts_tuned_sbmt <- predict(final_xgb_tuned_fit, new_data = test_data)
+
+# In a table
+results_tbl_sbmt3 <- test_data %>%
+  select(id, Datum, Warengruppe, KielerWoche, Bewoelkung, Temperatur, Windgeschwindigkeit, month) %>%
+  bind_cols(Umsatz = xgb_ts_tuned_sbmt$.pred)
+```
+
+Saving final dataset
+
+```{r}
+results_tbl_sbmt3 |>
+  select(id, Umsatz) |>
+  write_csv("data/submission_4.csv")
+```
+
+
+### XGBoost Model: Option 2
+In this option, we are going to build the model using XGBoost method by including `Warengruppe`, `Temperature`, and new variable `month` to fit the model. Starting from this, a cross-validation data will be created and hyperparameter tuning will be utilised. In this option, `Warengruppe` and `month` will be hot-encoded.
+
+#### Build the Model
+```{r}
+# Define the recipe for XGBoost for Option 2
+xgb_recipe_2 <- recipe(Umsatz ~ Warengruppe+Temperatur+month, data = DT_train) %>%
+                # Convert group_category and month to factors (if not already)
+                step_mutate(Warengruppe = as.factor(Warengruppe),
+                            month = as.factor(month)) %>%
+                # One-hot encode nominal predictors
+                step_dummy(all_nominal_predictors()) %>%
+                # Remove zero variance predictors (if any)
+                step_zv(all_predictors())
+
+# XGB tune workflow
+xgb_tuned_workflow_2 <- workflow() %>%
+  add_model(xgb_tuned_spec) %>%
+  add_recipe(xgb_recipe_2)
+
+xgb_grid <- grid_latin_hypercube(
+  tree_depth(),
+  min_n(),
+  loss_reduction(),
+  sample_size = sample_prop(),
+  finalize(mtry(), DT_train),
+  learn_rate(),
+  size = 20
+)
+
+doParallel::registerDoParallel()
+
+set.seed(2025)
+xgb_res_2 <- tune_grid(
+  xgb_tuned_workflow_2,
+  resamples = DT_folds,
+  grid = xgb_grid,
+  metrics = metric_set(rmse, rsq, mae, mape),
+  control = control_grid(save_pred  = TRUE)
+)
+
+# Show the best configurations
+show_best(xgb_res_2, metric = "mape", n = 3)
+
+# Fit the best model into the training set
+set.seed(2025)
+xgb_tuned_fit_2 <- finalize_workflow(xgb_tuned_workflow_2, select_best(xgb_res_2, metric = "mape")) %>%
+    fit(DT_train)
+
+# Make predictions on the test set
+xgb_train_predictions_2 <- predict(xgb_tuned_fit_2, new_data = DT_train)
+
+# Make predictions on the test set
+xgb_test_predictions_2 <- predict(xgb_tuned_fit_2, new_data = DT_test)
+```
+
+
+#### Evaluate the Model
+```{r}
+# Evaluate performance on training data
+xgb_train_results_2 <- xgb_train_predictions_2 %>%
+  bind_cols(DT_train) %>%
+  dplyr::select(.pred, Umsatz) %>%
+  rename(truth = Umsatz) %>%
+  mutate(model = "XGBoost_Tuned_Op2")
+
+# Evaluate performance on test data
+xgb_test_results_2 <- xgb_test_predictions_2 %>%
+  bind_cols(DT_test) %>%
+  dplyr::select(.pred, Umsatz) %>%
+  rename(truth = Umsatz) %>%
+  mutate(model = "XGBoost_Tuned_Op2")
+
+# Merge the results
+## Training set
+results_train <- bind_rows(results_train, xgb_train_results_2)
+
+## Test set
+results_test <- bind_rows(results_test, xgb_test_results_2)
+
+
+# Show the evaluation metrics for every model
+## Training set
+results_train %>%
+  group_by(model) %>%
+  summarise(RMSE = RMSE(.pred, truth),
+            R_Square = R2_Score(.pred, truth),
+            MAE = MAE(.pred, truth),
+            MAPE = MAPE(.pred, truth))
+
+## Test set
+results_test %>%
+  group_by(model) %>%
+  summarise(RMSE = RMSE(.pred, truth),
+            R_Square = R2_Score(.pred, truth),
+            MAE = MAE(.pred, truth),
+            MAPE = MAPE(.pred, truth))
+```
+
+#### 3rd Submission
+```{r}
+# Fit the best model into the full training set
+set.seed(2025)
+final_xgb_tuned_fit_2 <- finalize_workflow(xgb_tuned_workflow_2, select_best(xgb_res_2, metric = "mape")) %>%
+    fit(train_data)
+
+# Make predictions on the submission testing data
+xgb_ts_tuned_sbmt2 <- predict(final_xgb_tuned_fit_2, new_data = test_data)
+
+# In a table
+results_tbl_sbmt4 <- test_data %>%
+  select(id, Datum, Warengruppe, KielerWoche, Bewoelkung, Temperatur, Windgeschwindigkeit, month) %>%
+  bind_cols(Umsatz = xgb_ts_tuned_sbmt2$.pred)
+```
+
+Saving final dataset
+
+```{r}
+results_tbl_sbmt4 |>
+  select(id, Umsatz) |>
+  write_csv("data/submission_5.csv")
 ```
