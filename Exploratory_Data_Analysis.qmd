@@ -160,6 +160,11 @@ summary(train_data)
 train_data |>
   ggplot(aes(x = Datum, y = Umsatz)) +
   geom_point()
+
+
+train_data |>
+  ggplot(aes(x = as.factor(month), y = Umsatz)) +
+  geom_col()
 ```
 
 From the sales figures, it seems like there are 6 sales points that are unusual due to recording amounts above 1000. Some seasonality can be seen where during mid-year, sales are higher than the rest.
@@ -312,8 +317,16 @@ glimpse(filtered_train_data)
 
 ```{r}
 filtered_train_data |>
-  ggplot(aes(x = Datum, y = Umsatz)) +
+  ggplot(aes(x = Datum, y = Umsatz, colour = as.factor(KielerWoche))) +
   geom_point()
+
+filtered_train_data |>
+  ggplot(aes(x = as.factor(month), y = Umsatz, fill = as.factor(KielerWoche))) +
+  geom_col()
+
+filtered_train_data |>
+  ggplot(aes(x = as.factor(month), y = Umsatz, fill = as.factor(Warengruppe))) +
+  geom_col()
 ```
 
 -   Umsatz based on Warengruppe
@@ -350,6 +363,13 @@ filtered_train_data |>
 filtered_train_data |>
   ggplot(aes(x = as.factor(Wettercode), y = Umsatz)) +
   geom_boxplot()
+```
+
+
+```{r}
+filtered_train_data |>
+  ggplot(aes(x = Temperatur, y = Umsatz)) +
+  geom_point()
 ```
 
 - Saving final dataset

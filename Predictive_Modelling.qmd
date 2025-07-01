@@ -63,6 +63,32 @@ DT_alt <- DT |>
 
 # Add new variable `month`
 DT_alt$month <- as.numeric(format(DT_alt$Datum, "%m"))
+
+# Add new variable `day`
+DT_alt$day <- as.numeric(format(DT_alt$Datum, "%d"))
+
+# Add new variable `wday` which represents name of the day
+DT_alt$wday <- as.numeric(wday(DT_alt$Datum))
+
+# Add new variable `Peak_Season` which represents the period where sales are above usual (in July & August)
+DT_alt <- DT_alt %>%
+  mutate(Peak_Season = case_when(month == 7 ~ 1, 
+                                 month == 8 ~ 1,
+                                 TRUE ~ 0))
+
+# Add new variable `is_group235` which represents group 2,3,5 (vs the rest)
+DT_alt <- DT_alt %>%
+  mutate(is_group235 = case_when(Warengruppe == 2 ~ 1,
+                               Warengruppe == 3 ~ 1,
+                               Warengruppe == 5 ~ 1,
+                               TRUE ~ 0))
+
+# Add new variable `group235_PeakSeason` to capture the additional effect when both conditions are TRUE (groups 2,3,5 during Peak Season)
+DT_alt$Group235_PeakSeason <- ifelse(DT_alt$is_group235 == 1 & DT_alt$Peak_Season == 1, 1, 0)
+
+# Add new variable `Umsatz_log` to stabilise variance across low and high sales
+DT_alt <- DT_alt %>%
+            mutate(Umsatz_log = log1p(Umsatz))
 ```
 
 ### Split  data into train and test data sets
@@ -95,6 +121,8 @@ DT_test |>
 
 ### Imput the missing values in full train data
 ```{r}
+train_data <- read_csv(here("data/clean_data.csv"), col_names = TRUE)
+
 # Join the imputed values to the full training data
 ## exclude Wettercode variable due to irrelevant
 train_data <- train_data |>
@@ -108,11 +136,39 @@ train_data <- train_data |>
 
 # Add new variable `month`
 train_data$month <- as.numeric(format(train_data$Datum, "%m"))
+
+# Add new variable `day`
+train_data$day <- as.numeric(format(train_data$Datum, "%d"))
+
+# Add new variable `wday` which represents name of the day
+train_data$wday <- as.numeric(wday(train_data$Datum))
+
+# Add new variable `Peak_Season` which represents the period where sales are above usual (in July & August)
+train_data <- train_data %>%
+  mutate(Peak_Season = case_when(month == 7 ~ 1, 
+                                 month == 8 ~ 1,
+                                 TRUE ~ 0))
+
+# Add new variable `is_group2` which represents group 2,3,5 (vs the rest)
+train_data <- train_data %>%
+  mutate(is_group235 = case_when(Warengruppe == 2 ~ 1,
+                               Warengruppe == 3 ~ 1,
+                               Warengruppe == 5 ~ 1,
+                               TRUE ~ 0))
+
+# Add new variable `group235_PeakSeason` to capture the additional effect when both conditions are TRUE (groups 2,3,5 during Peak Season)
+train_data$Group235_PeakSeason <- ifelse(train_data$is_group235 == 1 & train_data$Peak_Season == 1, 1, 0)
+
+# Add new variable `Umsatz_log` to stabilise variance across low and high sales
+train_data <- train_data %>%
+            mutate(Umsatz_log = log1p(Umsatz))
 ```
 
 
 ### Merging the test data with other dataset (kiwo and wetter)
 ```{r merge}
+test <- read_csv(here("data/test.csv"), col_names = TRUE)
+
 test_data <- test |>
   left_join(kiwo, by = "Datum") |>
   left_join(wetter, by = "Datum") |>
@@ -140,6 +196,31 @@ test_data <- test_data |>
   left_join(DaBew_test, by = "Datum")
 
 test_data$month <- as.numeric(format(test_data$Datum, "%m"))
+
+# Add new variable `day`
+test_data$day <- as.numeric(format(test_data$Datum, "%d"))
+
+# Add new variable `wday` which represents name of the day
+test_data$wday <- as.numeric(wday(test_data$Datum))
+
+# Add new variable `Peak_Season` which represents the period where sales are above usual (in July & August)
+test_data <- test_data %>%
+  mutate(Peak_Season = case_when(month == 7 ~ 1, 
+                                 month == 8 ~ 1,
+                                 TRUE ~ 0))
+
+# Add new variable `is_group2` which represents group 2,3,5 (vs the rest)
+test_data <- test_data %>%
+  mutate(is_group235 = case_when(Warengruppe == 2 ~ 1,
+                               Warengruppe == 3 ~ 1,
+                               Warengruppe == 5 ~ 1,
+                               TRUE ~ 0))
+
+test_data$Group235_PeakSeason <- ifelse(test_data$is_group235 == 1 & test_data$Peak_Season == 1, 1, 0)
+
+# Add new variable `Umsatz_log` to stabilise variance across low and high sales (N/A!!!)
+## test_data <- test_data %>%
+##             mutate(Umsatz_log = log1p(Umsatz))
 
 glimpse(test_data)
 ```
@@ -391,7 +472,7 @@ In this option, we are going to try to include `Warengruppe`, `Temperature`, and
 ```{r}
 # Create a cross-validation data for resampling purposes during hyperparameter tuning
 ## Will be used for all hyperparameter tuning (across different model)
-set.seed(2022)
+set.seed(2025)
 DT_folds <- vfold_cv(DT_train, v = 5, repeats = 2, strata = Warengruppe)
 ```
 
@@ -660,10 +741,15 @@ In this option, we are going to build the model using XGBoost method by includin
 #### Build the Model
 ```{r}
 # Define the recipe for XGBoost for Option 2
-xgb_recipe_2 <- recipe(Umsatz ~ Warengruppe+Temperatur+month, data = DT_train) %>%
+xgb_recipe_2 <- recipe(Umsatz_log ~ Warengruppe+Temperatur+month+wday+Peak_Season+is_group235+Group235_PeakSeason, 
+                       data = DT_train) %>%
                 # Convert group_category and month to factors (if not already)
                 step_mutate(Warengruppe = as.factor(Warengruppe),
-                            month = as.factor(month)) %>%
+                            month = as.factor(month),
+                            wday = as.factor(wday),
+                            Peak_Season = as.factor(Peak_Season),
+                            is_group235 = as.factor(is_group235),
+                            Group235_PeakSeason = as.factor(Group235_PeakSeason)) %>%
                 # One-hot encode nominal predictors
                 step_dummy(all_nominal_predictors()) %>%
                 # Remove zero variance predictors (if any)
@@ -708,6 +794,7 @@ xgb_train_predictions_2 <- predict(xgb_tuned_fit_2, new_data = DT_train)
 
 # Make predictions on the test set
 xgb_test_predictions_2 <- predict(xgb_tuned_fit_2, new_data = DT_test)
+
 ```
 
 
@@ -737,7 +824,7 @@ results_test <- bind_rows(results_test, xgb_test_results_2)
 
 # Show the evaluation metrics for every model
 ## Training set
-results_train %>%
+xgb_train_results_2 %>%
   group_by(model) %>%
   summarise(RMSE = RMSE(.pred, truth),
             R_Square = R2_Score(.pred, truth),
@@ -745,13 +832,92 @@ results_train %>%
             MAPE = MAPE(.pred, truth))
 
 ## Test set
-results_test %>%
+xgb_test_results_2 %>%
   group_by(model) %>%
   summarise(RMSE = RMSE(.pred, truth),
             R_Square = R2_Score(.pred, truth),
             MAE = MAE(.pred, truth),
             MAPE = MAPE(.pred, truth))
 ```
+
+#### Investigate the model
+```{r}
+# In a table
+check_results_ts <- DT_test %>%
+  select(id, Datum, Warengruppe, KielerWoche, Bewoelkung, Temperatur, 
+         Windgeschwindigkeit, month, wday, Peak_Season, is_group235, Umsatz, Umsatz_log) %>%
+  bind_cols(Umsatz_pred = xgb_test_predictions_2$.pred) %>%
+  mutate(residual = Umsatz_pred - Umsatz_log,
+         abs_residual = abs(Umsatz_pred - Umsatz_log))
+
+# Viz 1
+ggplot(check_results_ts, aes(x = Umsatz_pred, y = residual)) +
+  geom_point(alpha = 0.4) +
+  geom_hline(yintercept = 0, color = "red", linetype = "dashed") +
+  labs(
+    title = "Residuals vs Predicted Sales",
+    x = "Predicted Sales",
+    y = "Residual (Actual - Predicted)"
+  ) +
+  theme_minimal()
+
+# Viz 2
+ggplot(check_results_ts, aes(x = as.factor(Warengruppe), y = residual)) +
+  geom_boxplot(outlier.alpha = 0.3) +
+  geom_hline(yintercept = 0, color = "red", linetype = "dashed") +
+  labs(
+    title = "Residuals by Group Category",
+    x = "Group Category",
+    y = "Residual (Actual - Predicted)"
+  ) +
+  theme_minimal()
+
+# Viz 3
+ggplot(check_results_ts, aes(x = Temperatur, y = residual)) +
+  geom_point(alpha = 0.4) +
+  geom_smooth(method = "loess", color = "blue", se = FALSE) +
+  geom_hline(yintercept = 0, color = "red", linetype = "dashed") +
+  labs(
+    title = "Residuals vs Temperature",
+    x = "Temperature",
+    y = "Residual (Actual - Predicted)"
+  ) +
+  theme_minimal()
+
+# Viz 4
+ggplot(check_results_ts, aes(x = as.factor(month), y = residual)) +
+  geom_boxplot(outlier.alpha = 0.3) +
+  geom_hline(yintercept = 0, color = "red", linetype = "dashed") +
+  labs(
+    title = "Residuals by Month",
+    x = "Month",
+    y = "Residual (Actual - Predicted)"
+  ) +
+  theme_minimal()
+
+# Viz 5
+ggplot(check_results_ts, aes(x = as.factor(Peak_Season), y = residual)) +
+  geom_boxplot(outlier.alpha = 0.3) +
+  geom_hline(yintercept = 0, color = "red", linetype = "dashed") +
+  labs(
+    title = "Residuals by Peak Season",
+    x = "Peak Season",
+    y = "Residual (Actual - Predicted)"
+  ) +
+  theme_minimal()
+
+# Viz 6
+ggplot(check_results_ts, aes(x = as.factor(is_group235), y = residual)) +
+  geom_boxplot(outlier.alpha = 0.3) +
+  geom_hline(yintercept = 0, color = "red", linetype = "dashed") +
+  labs(
+    title = "Residuals by Group Categories",
+    x = "is_group235",
+    y = "Residual (Actual - Predicted)"
+  ) +
+  theme_minimal()
+```
+
 
 #### 3rd Submission
 ```{r}
@@ -760,13 +926,25 @@ set.seed(2025)
 final_xgb_tuned_fit_2 <- finalize_workflow(xgb_tuned_workflow_2, select_best(xgb_res_2, metric = "mape")) %>%
     fit(train_data)
 
+# Make predictions on the full training data (for checking purposes)
+xgb_tr_tuned_sbmt2 <- predict(final_xgb_tuned_fit_2, new_data = train_data)
+
+# In a table
+check_results_tbl <- train_data %>%
+  select(id, Datum, Warengruppe, KielerWoche, Bewoelkung, Temperatur, 
+         Windgeschwindigkeit, month, wday, Peak_Season, is_group235, Umsatz, Umsatz_log) %>%
+  bind_cols(Umsatz_pred_log = xgb_tr_tuned_sbmt2$.pred) %>%
+  mutate(Umsatz_pred = expm1(Umsatz_pred_log),
+         delta = Umsatz_pred - Umsatz)
+
 # Make predictions on the submission testing data
 xgb_ts_tuned_sbmt2 <- predict(final_xgb_tuned_fit_2, new_data = test_data)
 
 # In a table
 results_tbl_sbmt4 <- test_data %>%
   select(id, Datum, Warengruppe, KielerWoche, Bewoelkung, Temperatur, Windgeschwindigkeit, month) %>%
-  bind_cols(Umsatz = xgb_ts_tuned_sbmt2$.pred)
+  bind_cols(Umsatz_pred_log = xgb_ts_tuned_sbmt2$.pred) %>%
+  mutate(Umsatz = expm1(Umsatz_pred_log))
 ```
 
 Saving final dataset
@@ -774,5 +952,15 @@ Saving final dataset
 ```{r}
 results_tbl_sbmt4 |>
   select(id, Umsatz) |>
-  write_csv("data/submission_5.csv")
+  write_csv("data/submission_9.csv")
 ```
+
+
+#### Check Results
+```{r}
+check_results_tbl %>%
+  filter(delta > 100 | delta < -100) %>%
+  group_by(Warengruppe) %>%
+  summarise(n = n())
+```
+
